@@ -1,6 +1,3 @@
-from os import error
-
-
 def leiaRegistro(arquivo) -> str:
     tamanhoDoRegistro = int.from_bytes(arquivo.read(2))
 

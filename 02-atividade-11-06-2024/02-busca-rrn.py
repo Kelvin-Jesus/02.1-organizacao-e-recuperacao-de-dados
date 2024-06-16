@@ -19,7 +19,7 @@ def main():
         
         arquivo.seek(offsetDeLeitura)
         
-        registro:str = arquivo.read(64).decode()
+        registro:str = arquivo.read(TAMANHO_REGISTRO).decode()
 
         camposDoRegistro = registro.split('|')
         

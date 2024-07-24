@@ -23,11 +23,16 @@ class OPERACOES(Enum):
 
 TAMANHO_HEADER = 4
 TAMANHO_BYTES_REGISTRO = 2
+TAMANHO_ID = 2
 
 class LED:
     def __init__(self, arquivo):
+        self._led: List[List[int, int]] = []
+
         self._arquivo = arquivo
-        self._ponteiroAtual: str = '-1'
+        arquivo.seek(0)
+        cabecalho = arquivo.read(TAMANHO_HEADER).decode('utf-8', 'ignore')
+        self._ponteiroAtual: str = '-1' if cabecalho == '' else cabecalho
 
     def ponteiroAtual(self) -> int:
         return self._ponteiroAtual
@@ -35,21 +40,10 @@ class LED:
     def estaVazia(self) -> bool:
         return self.ponteiroAtual() == '-1'
 
-    def inserir(self, registro):
-        if self.estaVazia():
-            self._arquivo.seek(0)
-            self._arquivo.write(0)
-            self._arquivo.seek(4)
-            self._arquivo.write(registro)
-        pass
-
-    def remover(self, byteOffsetDoRegistro: int) -> None:
+    def inserir(self, byteOffsetDoRegistro: int) -> None:
         self._arquivo.seek(0)
-        self._arquivo.write(byteOffsetDoRegistro.to_bytes(4))
+        self._arquivo.write(str(byteOffsetDoRegistro).encode('utf-8'))
         self._ponteiroAtual = byteOffsetDoRegistro
-
-    def buscar(self, id):
-        pass
 
     def __str__(self):
         return 'LED'
@@ -61,11 +55,11 @@ def lerRegistro(arquivo) -> Tuple[int, str]:
     tamanho = tamanhoDoRegistro(arquivo)
 
     if tamanho == 0:
-        sys.exit()
+        return 0, ''
 
     registro = arquivo.read(tamanho)
 
-    stringDoRegistro = registro.decode('utf-8')
+    stringDoRegistro = registro.decode()
     idDoRegistro = int(stringDoRegistro.split('|')[0])
 
     return idDoRegistro, stringDoRegistro
@@ -83,6 +77,9 @@ def lerFlagsDeEntrada() -> Namespace:
 
     if argumentos.e is not None and argumentos.p is not None:
         sys.exit('Erro: Apenas uma flag pode ser passada por vez')
+
+    if argumentos.e is None and argumentos.p is None:
+        sys.exit('Erro: Nenhuma flag foi passada')
 
     return argumentos
 
@@ -103,11 +100,15 @@ def parsearOperacao(operacao: str):
 
 def buscaRegistro(id: int, arquivo) -> Tuple[str, int]:
     bytesLidos = 6
+    arquivo.seek(0)
+    arquivo.seek(4)
+
     while True:
         idDoRegistro, registro = lerRegistro(arquivo)
+        # print(registro)
 
         if registro == '':
-            break
+            return None, bytesLidos
 
         if idDoRegistro == id:
             return registro, bytesLidos
@@ -129,18 +130,34 @@ def executarOperacoes(operacoes: List[str], led: LED, arquivo) -> None:
 
             jogo = buscaRegistro(id, arquivo)
 
-            print(f'{jogo} ({len(jogo)} bytes)')
+            if jogo == '' or jogo is None:
+                print('Erro: registro não encontrado', end='\n')
+                continue
+
+            print(f'{jogo} ({len(jogo)} bytes)', end='\n')
 
         if operacao == OPERACOES.INSERIR.value:
-            continue
             tamanhoDoRegistro = len(registro)
             idRegistro = int(registro.split('|')[0])
             print(f'Inserção do registro de chave "{idRegistro}" ({tamanhoDoRegistro} bytes)')
+            print(registro)
             if led.estaVazia():
-                escreverRegistroNoFim(registro, arquivo)
-                print('Local: fim do arquivo')
+                # escreverRegistroNoFim(registro, arquivo)
+                print('Local: fim do arquivo', end='\n')
             else:
-                # Olha a led para checar se tem espaço que cabe o registro
+                byteOffsetDisponivel = int(led.ponteiroAtual())
+                arquivo.seek(byteOffsetDisponivel)
+
+                tamanhoDoRegistroAtual = arquivo.read(2)
+                tamanhoDoRegistroAtual = int.from_bytes(tamanhoDoRegistroAtual)
+
+                if tamanhoDoRegistroAtual < tamanhoDoRegistro:
+                    continue
+
+                sobra = tamanhoDoRegistroAtual - tamanhoDoRegistro
+
+                arquivo.write(registro.encode('utf-8'))
+
                 # Se tiver, escreve o registro lá
                 # Se não tiver, escreve no fim do arquivo
 
@@ -148,29 +165,32 @@ def executarOperacoes(operacoes: List[str], led: LED, arquivo) -> None:
 
         if operacao == OPERACOES.REMOVER.value:
             id: int = int(registro)
-            jogo, totalBytesLidos = buscaRegistro(id, arquivo)
+            jogo, byteOffsetDoRegistro = buscaRegistro(id, arquivo)
+
+            print(f'Remoção do registro de chave "{id}"')
+
+            if jogo == '' or jogo is None:
+                print('Erro: registro não encontrado', end='\n')
+                continue
+
             tamanhoDoRegistro: int = len(jogo)
 
             print(jogo)
 
-            print(f'Remoção do registro de chave "{id}"')
             print(f'Registro removido! ({tamanhoDoRegistro} bytes)')
-            print(f'Local: offset = {totalBytesLidos} bytes ({hex(totalBytesLidos)})')
-
-            byteOffsetDoRegistro: int = totalBytesLidos - tamanhoDoRegistro - TAMANHO_BYTES_REGISTRO
-            print('byteOffsetDoRegistro: ', byteOffsetDoRegistro)
-            # continue
+            print(f'Local: offset = {byteOffsetDoRegistro} bytes ({hex(byteOffsetDoRegistro)})', end='\n')
 
             ponteiroAtualDaLED: int = led.ponteiroAtual()
-            removeRegistro(arquivo, totalBytesLidos, ponteiroAtualDaLED)
-            # led.remover(totalBytesLidos)
+            removeRegistroLogicamente(arquivo, byteOffsetDoRegistro, ponteiroAtualDaLED)
+            led.inserir(byteOffsetDoRegistro)
 
-def removeRegistro(arquivo, byteOffsetDoRegistro: int, ponteiroAtualDaLED: str) -> None:
+def removeRegistroLogicamente(arquivo, byteOffsetDoRegistro: int, ponteiroAtualDaLED: str) -> None:
     arquivo.seek(0)
-    arquivo.seek(byteOffsetDoRegistro + TAMANHO_BYTES_REGISTRO)
-    registro = arquivo.read(4)
-    print('algo do registro: ', registro)
-    # arquivo.write(f'*{ponteiroAtualDaLED}'.encode('utf-8'))
+    arquivo.seek(byteOffsetDoRegistro + TAMANHO_BYTES_REGISTRO + TAMANHO_ID)
+
+    registro = arquivo.read(1)
+
+    arquivo.write(f'*{ponteiroAtualDaLED}'.encode('utf-8'))
 
 def main() -> None:
     existeArquivoDeDados: bool = os.path.isfile('dados.dat')
@@ -181,7 +201,6 @@ def main() -> None:
     flag = lerFlagsDeEntrada()
 
     arquivo = open('dados.dat', 'r+b')
-    arquivo.seek(4)
 
     led = LED(arquivo)
 
@@ -189,7 +208,6 @@ def main() -> None:
         operacoes = lerArquivoDeOperacoes(flag.e)
 
         executarOperacoes(operacoes, led, arquivo)
-        print(operacoes)
 
     arquivo.close()
 
